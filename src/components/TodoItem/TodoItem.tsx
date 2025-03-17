@@ -9,9 +9,10 @@ import React, {
 } from 'react';
 import { Todo } from '../../types/Todo';
 import classNames from 'classnames';
-import { deleteTodo, editTodo } from '../../api/todos';
+import { editTodo } from '../../api/todos';
 import callError from '../../utils/callError';
 import { MainContext } from '../../ContextProvider/ContextProvider';
+import { TodoDelete } from './utils';
 
 type TodoProps = {
   todo: Todo;
@@ -19,7 +20,7 @@ type TodoProps = {
 
 const TodoItem: React.FC<TodoProps> = ({ todo }) => {
   const context = useContext(MainContext);
-  const { todos, setTodos, setError, loadingIds } = context;
+  const { setTodos, setError, loadingIds } = context;
 
   const { id, title, completed } = todo;
 
@@ -30,6 +31,7 @@ const TodoItem: React.FC<TodoProps> = ({ todo }) => {
   });
 
   const { isTodoEditing, editedValue, isLoading } = todoState;
+  const newTitle = editedValue.trim();
 
   const focusedTodo = useRef<HTMLInputElement | null>(null);
 
@@ -49,6 +51,26 @@ const TodoItem: React.FC<TodoProps> = ({ todo }) => {
       }
     }
   }, [isTodoEditing]);
+
+  useEffect(() => {
+    const handleEscapeClick = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setTodoState({
+          ...todoState,
+          isTodoEditing: false,
+          editedValue: title,
+        });
+      }
+    };
+
+    if (isTodoEditing) {
+      document.addEventListener('keydown', handleEscapeClick);
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleEscapeClick);
+    };
+  }, [todoState, isTodoEditing, title]);
 
   useEffect(() => {
     const cleanInputFocus = (event: MouseEvent) => {
@@ -74,15 +96,9 @@ const TodoItem: React.FC<TodoProps> = ({ todo }) => {
     (event: React.MouseEvent) => {
       event.preventDefault();
 
-      setTodoState(prev => ({ ...prev, isLoading: true }));
-
-      deleteTodo(id)
-        .then(() => {
-          setTodos(todos.filter(task => task.id !== id));
-        })
-        .catch(() => callError(setError, 'delete'));
+      TodoDelete(id, setTodos, setError, setTodoState);
     },
-    [id, todos, setError, setTodos],
+    [id, setError, setTodos],
   );
 
   const handleCompleteTodo = useCallback(() => {
@@ -110,7 +126,7 @@ const TodoItem: React.FC<TodoProps> = ({ todo }) => {
   }, [setTodoState, id, completed, setTodos, setError]);
 
   const saveTodoTitleChanges = useCallback(() => {
-    if (title === editedValue) {
+    if (title === newTitle) {
       setTodoState(prev => ({ ...prev, isTodoEditing: false }));
 
       return;
@@ -118,30 +134,35 @@ const TodoItem: React.FC<TodoProps> = ({ todo }) => {
 
     setTodoState(prev => ({ ...prev, isLoading: true }));
 
-    editTodo(id, { title: editedValue })
+    editTodo(id, { title: newTitle })
       .then((res: Todo) => {
         setTodos((prev: Todo[]) =>
           prev.map(task => (task.id === id ? res : task)),
         );
-      })
-      .catch(() => callError(setError, 'update'))
-      .finally(() => {
         setTodoState(prev => ({
           ...prev,
           isLoading: false,
           isTodoEditing: false,
         }));
+      })
+      .catch(() => {
+        callError(setError, 'update');
+        setTodoState(prev => ({
+          ...prev,
+          isLoading: false,
+        }));
       });
-  }, [setTodoState, id, title, editedValue, setTodos, setError]);
+  }, [setTodoState, id, title, newTitle, setTodos, setError]);
 
-  const handleEditFormSubmit = useCallback(
-    (event: React.FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
+  const applyTodoUpdate = useCallback(() => {
+    if (newTitle.length === 0) {
+      TodoDelete(id, setTodos, setError, setTodoState);
 
-      saveTodoTitleChanges();
-    },
-    [saveTodoTitleChanges],
-  );
+      return;
+    }
+
+    saveTodoTitleChanges();
+  }, [saveTodoTitleChanges, id, newTitle.length, setTodos, setError]);
 
   return (
     <div
@@ -160,7 +181,12 @@ const TodoItem: React.FC<TodoProps> = ({ todo }) => {
       </label>
 
       {todoState.isTodoEditing ? (
-        <form onSubmit={handleEditFormSubmit}>
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            applyTodoUpdate();
+          }}
+        >
           <input
             data-cy="TodoTitleField"
             type="text"
@@ -168,7 +194,7 @@ const TodoItem: React.FC<TodoProps> = ({ todo }) => {
             placeholder="Empty todo will be deleted"
             value={editedValue}
             ref={focusedTodo}
-            onBlur={() => saveTodoTitleChanges()}
+            onBlur={() => applyTodoUpdate()}
             onChange={e =>
               setTodoState({ ...todoState, editedValue: e.target.value })
             }
@@ -182,19 +208,21 @@ const TodoItem: React.FC<TodoProps> = ({ todo }) => {
             setTodoState({ ...todoState, isTodoEditing: true })
           }
         >
-          {editedValue}
+          {newTitle}
         </span>
       )}
 
       {/* Remove button appears only on hover */}
-      <button
-        type="button"
-        className="todo__remove"
-        data-cy="TodoDelete"
-        onClick={handleDeleteClick}
-      >
-        ×
-      </button>
+      {!isTodoEditing && (
+        <button
+          type="button"
+          className="todo__remove"
+          data-cy="TodoDelete"
+          onClick={handleDeleteClick}
+        >
+          ×
+        </button>
+      )}
 
       {/* overlay will cover the todo while it is being deleted or updated */}
       <div
